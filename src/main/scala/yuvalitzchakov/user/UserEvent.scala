@@ -1,4 +1,4 @@
-package com.github.yuvalitzchakov.user
+package yuvalitzchakov.user
 
 import argonaut.Argonaut._
 import argonaut.CodecJson

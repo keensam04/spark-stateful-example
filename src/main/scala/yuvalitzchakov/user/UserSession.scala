@@ -1,4 +1,4 @@
-package com.github.yuvalitzchakov.user
+package yuvalitzchakov.user
 
 /**
   * Created by Yuval.Itzchakov on 3/12/2017.
