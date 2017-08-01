@@ -7,11 +7,12 @@ import com.typesafe.config.{Config, ConfigFactory}
 import kafka.serializer.StringDecoder
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.Path
+import org.apache.spark.broadcast.Broadcast
 import org.apache.spark.streaming._
 import org.apache.spark.streaming.kafka.{HasOffsetRanges, KafkaUtils, OffsetRange}
 import org.apache.spark.{SparkConf, SparkContext}
 import yuvalitzchakov.user.{UserEvent, UserSession}
-import yuvalitzchakov.utils.CredentialsProvider
+import yuvalitzchakov.utils.{CredentialsProvider, KafkaWriter}
 
 import scala.collection.mutable
 import scalaz.{-\/, \/-}
@@ -19,7 +20,7 @@ import scalaz.{-\/, \/-}
 /**
   * Created by Yuval.Itzchakov on 3/12/2017.
   */
-object SparkStatefulRunner {
+object SparkStatefulRunnerWithBroadcast {
 
   def main(args: Array[String]): Unit = {
 
@@ -72,7 +73,9 @@ object SparkStatefulRunner {
     val kafkaCredentials = credentialsStore.fetchCredentialByNameAsJson("kafka-service").get
     val brokerUrl = CredentialsProvider.jsonArrayToConnection(kafkaCredentials.get("brokers").getAsJsonArray)
 
-    val stateSpec = StateSpec.function(updateUserEvents _).timeout(Minutes(jobConfig.getLong("timeoutInMinutes")))
+    val kafkaWriter = KafkaWriter.getInstance(brokerUrl)
+    val stateSpec = StateSpec.function((key: Int, value: Option[UserEvent], state: State[UserSession]) =>
+      updateUserEvents(key, value, state, kafkaWriter)).timeout(Minutes(jobConfig.getLong("timeoutInMinutes")))
 
     val offsetsQueue = mutable.Queue[Array[OffsetRange]]()
 
@@ -120,7 +123,8 @@ object SparkStatefulRunner {
 
   def updateUserEvents(key: Int,
                        value: Option[UserEvent],
-                       state: State[UserSession]): Option[UserSession] = {
+                       state: State[UserSession],
+                       kafkaWriter: Broadcast[KafkaWriter]): Option[UserSession] = {
     def updateUserSessions(newEvent: UserEvent): Option[UserSession] = {
       val existingEvents: Seq[UserEvent] =
         state
@@ -133,9 +137,11 @@ object SparkStatefulRunner {
       updatedUserSessions.userEvents.find(_.isLast) match {
         case Some(_) =>
           state.remove()
+          kafkaWriter.value.writeToOutTopic(s"state removed. removed value is ${updatedUserSessions.userEvents.last}")
           Some(updatedUserSessions)
         case None =>
           state.update(updatedUserSessions)
+          kafkaWriter.value.writeToOutTopic(s"state updated. removed value is ${state.get.userEvents.last}")
           None
       }
     }
